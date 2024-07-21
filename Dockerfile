@@ -2,20 +2,12 @@
 # Наш базовий образ - це Linux з попередньо встановленим python-3.10
 FROM python:3.10
 
-# Встановимо змінну середовища
-ENV APP_HOME /app
 
-# Встановимо робочу директорію всередині контейнера
-WORKDIR $APP_HOME
+WORKDIR /app
 
-# Скопіюємо інші файли в робочу директорію контейнера
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+
 COPY . .
 
-# Встановимо залежності всередині контейнера
-RUN pip3 install --no-cache-dir -r requirements.txt \ && rm -rf /root/.cache
-
-# Позначимо порт, де працює застосунок всередині контейнера
-EXPOSE 8000
-
-# Запустимо наш застосунок всередині контейнера
-ENTRYPOINT ["python3", "main.py"]
+CMD ["python", "main.py"]

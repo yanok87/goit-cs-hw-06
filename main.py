@@ -1,99 +1,96 @@
-import pathlib
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import urllib.parse
 import socket
-import threading
-from pymongo import MongoClient
-from pymongo.server_api import ServerApi
+import json
 from datetime import datetime
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import UDPServer, BaseRequestHandler
+from urllib.parse import parse_qs
+from pymongo import MongoClient
 
-HTTPServerPort = 3000
+
+mongo_client = MongoClient("mongodb://mongo:27017/")
+db = mongo_client.messages_db
+messages_collection = db.messages
 
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_POST(self, data):
-        save_data(data)
 
     def do_GET(self):
-        pr_url = urllib.parse.urlparse(self.path)
-        if pr_url.path == "/":
-            self.send_html_file("index.html")
-        elif pr_url.path == "/message":
-            self.send_html_file("message.html")
+        if self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            with open("templates/index.html", "rb") as file:
+                self.wfile.write(file.read())
+        elif self.path == "/message.html":
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            with open("templates/message.html", "rb") as file:
+                self.wfile.write(file.read())
+        elif self.path == "/style.css":
+            self.send_response(200)
+            self.send_header("Content-type", "text/css")
+            self.end_headers()
+            with open("static/style.css", "rb") as file:
+                self.wfile.write(file.read())
+        elif self.path == "/logo.png":
+            self.send_response(200)
+            self.send_header("Content-type", "image/png")
+            self.end_headers()
+            with open("static/logo.png", "rb") as file:
+                self.wfile.write(file.read())
         else:
-            if pathlib.Path().joinpath(pr_url.path[1:]).exists():
-                self.send_static()
-            else:
-                self.send_html_file("error.html", 404)
+            self.send_response(404)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            with open("templates/error.html", "rb") as file:
+                self.wfile.write(file.read())
 
-    def send_static(self):
-        self.send_response(200)
-        mt = mimetypes.guess_type(self.path)
-        if mt:
-            self.send_header("Content-type", mt[0])
-        else:
-            self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        with open(f".{self.path}", "rb") as file:
-            self.wfile.write(file.read())
-
-
-def start_web_server():
-    server_address = ("localhost", 3000)
-    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
-    print("Serving on port 3000...")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        httpd.server_close()
-        print("Shutdown server")
+    def do_POST(self):
+        if self.path == "/message":
+            content_length = int(self.headers["Content-Length"])
+            post_data = self.rfile.read(content_length)
+            post_data = parse_qs(post_data.decode("utf-8"))
+            username = post_data["username"][0]
+            message = post_data["message"][0]
+            data = {
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+                "username": username,
+                "message": message,
+            }
+            send_to_socket_server(data)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.end_headers()
 
 
-# MONGODB
-def save_data(data):
-    client = MongoClient(uri, server_api=ServerApi("1"))
-    db = client.book
-    data_parse = urllib.parse.unquote_plus(data.decode())
-
-    result_one = db.messages.insert_one(
-        {
-            "date": datetime.now(),
-            "username": 3,
-            "message": ["ходить в капці", "дає себе гладити", "рудий"],
-        }
-    )
+def send_to_socket_server(data):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.sendto(json.dumps(data).encode(), ("localhost", 5000))
 
 
-# SOCKET
-UDP_IP = "127.0.0.1"
-UDP_PORT = 5000
+class SocketHandler(BaseRequestHandler):
+    def handle(self):
+        data = self.request[0].strip()
+        message = json.loads(data.decode())
+        messages_collection.insert_one(message)
 
 
-# Підключення до сервера
-def run_socket_server(ip, port):
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server = ip, port
-    client.bind(server)
-    try:
-        while True:
-            data, address = client.recvfrom(1024)
-            print(f"Received data: {data.decode()} from {address}")
+def run_http_server():
+    httpd = HTTPServer(("0.0.0.0", 3000), SimpleHTTPRequestHandler)
+    httpd.serve_forever()
 
-    except KeyboardInterrupt:
-        print("Close server")
 
-    finally:
-        client.close()
+def run_socket_server():
+    udp_server = UDPServer(("0.0.0.0", 5000), SocketHandler)
+    udp_server.serve_forever()
 
 
 if __name__ == "__main__":
-
-    # Запуск потоків для прослуховування та письма
-    receive_thread = threading.Thread(target=receive)
-    receive_thread.start()
-
-    write_thread = threading.Thread(target=run_socket_server(UDP_IP, UDP_PORT))
-    write_thread.start()
-
-    receive_thread.join()
-    write_thread.join()
+    http_server_thread = Thread(target=run_http_server)
+    socket_server_thread = Thread(target=run_socket_server)
+    http_server_thread.start()
+    socket_server_thread.start()
+    http_server_thread.join()
+    socket_server_thread.join()
