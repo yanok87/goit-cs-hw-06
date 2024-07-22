@@ -1,11 +1,11 @@
 import socket
 import json
 from datetime import datetime
-from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import UDPServer, BaseRequestHandler
 from urllib.parse import parse_qs
 from pymongo import MongoClient
+from multiprocessing import Process
 
 
 mongo_client = MongoClient("mongodb://mongo:27017/")
@@ -88,9 +88,11 @@ def run_socket_server():
 
 
 if __name__ == "__main__":
-    http_server_thread = Thread(target=run_http_server)
-    socket_server_thread = Thread(target=run_socket_server)
-    http_server_thread.start()
-    socket_server_thread.start()
-    http_server_thread.join()
-    socket_server_thread.join()
+    http_server_process = Process(target=run_http_server)
+    socket_server_process = Process(target=run_socket_server)
+
+    http_server_process.start()
+    socket_server_process.start()
+
+    http_server_process.join()
+    socket_server_process.join()
